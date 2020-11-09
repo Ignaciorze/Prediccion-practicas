@@ -1,0 +1,483 @@
+---
+title: "Práctica 02"
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "7/11/2020"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://veratvimgs.cdn.antel.net.uy/dynamic/category_images/168/566/default.jpg" alt="JuveYell" width="600px">
+</p>
+</div>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objetivo del trabajo
+
+El objetivo de este trabajo es el de encontrar un modelo capaz de predecir el salario de un jugador
+de la NBA a partir de una serie de variables que vendrán definidas en el dataset de la NBA. A partir de modelos de regresión lineal encontraremos las variables más relevantes que definen el salario de un jugador a la hora de realizar una predicción con el menor error posible. Se utilizarán las técnicas de cross validation y regularización para seleccionar el mejor modelo desde un punto de vista predictivo.
+
+
+
+## Librerías
+
+```{r message=TRUE, warning=TRUE}
+library(here) # Comentar
+library(tidyverse)
+library(janitor) # Clean names
+library(skimr) # Beautiful Summarize
+library(magrittr) # Pipe operators
+library(corrplot) # Correlations
+library(ggcorrplot)  # Correlations
+library(PerformanceAnalytics) # Correlations
+library(leaps) # Model selection
+library(rsample)  # data splitting 
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)  
+library(ggplot2)
+```
+### Dataset
+
+```{r message=TRUE, warning=TRUE}
+nba <-  read.csv("./data/nba.csv")
+head(nba)
+nba %<>% clean_names()
+```
+
+### Análisis Descriptivo
+
+* Variables
+
+```{r message=TRUE, warning=TRUE}
+colnames(nba)
+```
+
+* Detección de duplicados 
+
+```{r message=TRUE, warning=TRUE}
+nba %<>% distinct(player,.keep_all = TRUE)
+```
+
+* Eliminación de NA
+
+```{r message=TRUE, warning=TRUE}
+nba %<>% drop_na()
+```
+
+* Summary
+
+```{r message=TRUE, warning=TRUE, fig.height = 20, fig.width = 4, fig.align = "center"}
+skim(nba)
+
+
+nba %>% 
+  select_at(vars(-c("player","nba_country","tm"))) %>% 
+  tidyr::gather("id", "value", 2:25) %>% 
+  ggplot(., aes(y = log(salary), x = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  facet_wrap(~id,ncol = 2,scales = "free_x")
+```
+
+## Exploratory data analysis
+
+Para la realización de los modelos y de nuestro estudio, transformamos la variable independiente y que pretendemos explicar como es el salario de un jugador NBA en logaritmo. 
+
+```{r message=TRUE, warning=TRUE}
+nba_log <- nba %>% mutate(salary = log(salary))
+```
+
+También se eliminarán aquellas variables que desde un principio no vayan a explicar el comportamiento del salario como son los nombres de los jugadores, los países y los equipos de la NBA ya que cada equipo tiene un límite salarial.
+
+```{r message=TRUE, warning=TRUE}
+categoricas <- c("player","nba_country","tm")
+```
+
+Matriz de correlaciones
+
+```{r fig.align= 'center', fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+ggcorrplot(cor(nba_log %>% 
+                 select_at(vars(-categoricas)), 
+               use = "complete.obs"),
+           hc.order = TRUE,
+           type = "lower",  lab = TRUE)
+
+```
+
+Observamos que las variables con más correlación son:
+
+* Offensive Box Plus/Minus y Box Plus/Minus puesto que son variables que mantienen una relación en cuanto a las estadísticas.
+* PER y Offensive Box Plus/Minus puesto que el PER engloba un conjunto de estadísticas entre las que se encuentra el Offensive Box Plus/Minus.
+* Win Shares Per 48 Minutes y el PER puesto que el PER engloba un conjunto de estadísticas.
+* Offensive Win shares y win shares 
+
+Las que menos correlación tienen son:
+
+* 3-Point Attempt Rate Percentage y muchas de las estadísticas como los rebotes ya que normalmente los jugadores que tiran de 3 no tienen porque ser jugadores que cojan rebotes ya que normalmente se asocia los tiros de 3 a jugadores con estatura baja ocon un posición de base o escolta y que no tienen la obligación de cojer rebotes.
+
+## Modelo de regresión lineal
+
+```{r message=TRUE, warning=TRUE}
+nba_sin_categoricas <- nba_log %>% dplyr::select(salary,age,nba_draft_number, 
+                                                           g:vorp) 
+
+regresion1 <- lm(salary~., data = nba_sin_categoricas)
+
+summary(regresion1)
+```
+Se observa a primera vista que muchas de las variables del modelo no resultan significativas con un error de 1.015 y un Adjusted R - squared de 53.54%.
+
+#### Cálculo de los valores VIF
+
+```{r message=TRUE, warning=TRUE}
+nba_sin_categoricas <- nba_log %>% dplyr::select(salary,age,nba_draft_number, 
+                                                           g:vorp) 
+
+regresion1 <- lm(salary~., data = nba_sin_categoricas)
+
+summary(regresion1)
+```
+
+El VIF mide cuánto aumenta la varianza de un coeficiente de regresión estimado si sus predictores están correlacionados. A mayor variación nos resulatría un problema ya que buscamos estimaciones precisas. Si la varianza de los coeficientes aumenta, nuestro modelo no será fiable. El VIF también detecta problemas de multicolinealidad. Genera cambios muy grandes en los estimadores. 
+
+En este caso presentan problemas de colinealidad: mp, per, orb, drb, trb, ows,
+dws, ws, ws_48, obpm, dbpm, bpm, vorp.
+
+#### Selección del modelo
+
+
+```{r message=TRUE, warning=TRUE}
+nba_final <- nba_sin_categoricas # Empleamos todas las varaibles en un principio
+
+set.seed(1234)
+filas_data <- nrow(nba_final) # número de filas 
+num_data_test <- 10
+train <-  sample(filas_data ,filas_data - num_data_test)
+
+
+nba_train <- nba_sin_categoricas[train,] # data de entrenamiento
+nba_test  <-  nba_sin_categoricas[-train,] # data para el test
+
+seleccion_modelo <- regsubsets(salary~. , data = nba_train, method = "seqrep", nvmax = 20)
+
+resumen_seleccion_modelo <- summary(seleccion_modelo)
+
+data.frame(
+  Adj.R2 = (resumen_seleccion_modelo$adjr2),
+  CP = (resumen_seleccion_modelo$cp),
+  BIC = (resumen_seleccion_modelo$bic)
+)
+```
+BIC nos muestra los mejores modelos según el número de variables. Cuando cambiamos neustro `set.seed` surgen resultados distintos para una misma muestra. 
+
+```{r message=TRUE, warning=TRUE}
+data.frame(
+  Adj.R2 = which.max(resumen_seleccion_modelo$adjr2),
+  CP = which.min(resumen_seleccion_modelo$cp),
+  BIC = which.min(resumen_seleccion_modelo$bic)
+)
+```
+
+Por ejemplo, si escogemos el criterio de BIC nos encontraremos con el siguiente modelo
+
+```{r message=TRUE, warning=TRUE}
+coef(seleccion_modelo,which.min(resumen_seleccion_modelo$bic))
+```
+
+Esta es una forma de elegir un modelo dependiendo del criterio que se elija pero para este trabajo se utilizarán las técnicas de cross validation y regularización para seleccionar el mejor modelo desde un punto de vista predictivo.
+
+## Mediante Ridge
+
+En primer lugar, creamos matrices de los modelos de funciones y vectores de respuesta de entrenamiento y de prueba.
+
+
+```{r message=TRUE, warning=TRUE}
+nba_train_x <- model.matrix(salary ~ ., nba_train)[, -1]
+nba_train_y <- nba_train$salary
+
+nba_test_x <- model.matrix(salary ~ ., nba_test)[, -1]
+nba_test_y <- nba_test$salary
+
+```
+Para realizar un regresión cresta podemos usar la función glmnet :: glmnet. El parámetro alpha le dice a glmnet que realice una regersión cresta (alpha = 0).
+
+```{r message=TRUE, warning=TRUE}
+nba_ridge <- glmnet(
+  x = nba_train_x,
+  y = nba_train_y,
+  alpha = 0 # Ridge
+)
+
+plot(nba_ridge, xvar = "lambda")
+  
+nba_ridge$lambda %>% head()
+
+```
+
+## Mediante Lasso
+
+```{r message=TRUE, warning=TRUE}
+nba_lasso <- glmnet(
+  x = nba_train_x,
+  y = nba_train_y,
+  alpha = 1
+)
+
+plot(nba_lasso, xvar = "lambda")
+```
+
+### Mediante Cross-Validation
+
+```{r message=TRUE, warning=TRUE}
+
+nba_lasso_cv <- cv.glmnet(
+  x = nba_train_x,
+  y = nba_train_y,
+  alpha = 1
+)
+
+plot(nba_lasso_cv)
+```
+```{r message=TRUE, warning=TRUE}
+min(nba_lasso_cv$cvm)
+```
+Este es el criterio que se seguirá para elegir el modelo más preciso
+
+### Elastic Net (Red elástica)
+
+```{r echo=FALSE, fig.align= 'center', fig.height=10, fig.width=10, message=TRUE, warning=TRUE}
+
+lasso_nba    <- glmnet(nba_train_x, nba_train_y, alpha = 1.0) 
+elastic1_nba <- glmnet(nba_train_x, nba_train_y, alpha = 0.2) 
+elastic2_nba <- glmnet(nba_train_x, nba_train_y, alpha = 0.8) 
+ridge_nba    <- glmnet(nba_train_x, nba_train_y, alpha = 0.0)
+
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1)
+plot(lasso_nba, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1_nba, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2_nba, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge_nba, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+
+```
+
+A continuación encontraremos el alpha óptimo para un MSE mínimo junto con su lambda.
+
+```{r  message=TRUE, warning=TRUE, include=FALSE}
+
+nba_id <- sample(1:10, size = length(nba_train_y), replace = TRUE)
+
+nba_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1),
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+nba_grid
+```
+```{r  message=TRUE, warning=TRUE}
+for(i in seq_along(nba_grid$alpha)) {
+  
+ 
+  fit <- cv.glmnet(nba_train_x, nba_train_y, alpha = nba_grid$alpha[i], foldid = nba_id)
+  
+ 
+  nba_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  nba_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  nba_grid$lambda_min[i] <- fit$lambda.min
+  nba_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+nba_grid
+```
+El alpha con el error mínimo es el 0.9 con un lambda de 0.07
+
+```{r fig.align= 'center', fig.height=10, fig.width=10, message=TRUE, warning=TRUE}
+nba_grid %>%
+  mutate(se = mse_1se - mse_min) %>%
+  ggplot(aes(alpha, mse_min)) +
+  geom_line(size = 2) +
+  geom_ribbon(aes(ymax = mse_min + se, ymin = mse_min - se), alpha = .25) +
+  ggtitle("MSE ± one standard error")
+```
+
+
+```{r message=TRUE, warning=TRUE}
+# mejor modelo
+cv_net   <- cv.glmnet(nba_train_x, nba_train_y, alpha = 0.9)
+min(cv_net$cvm)
+
+# predicción
+pred <- predict(cv_net, s = cv_net$lambda.min, nba_test_x)
+mean((nba_test_y - pred)^2)
+```
+#### Modelo sin variables con multicolinealidad
+
+Según el criterio de los VIF values realizamos el procedimiento anterior sin las variables que hemos visto que nos ha marcado los valores VIF.
+
+```{r  message=TRUE, warning=TRUE}
+variables <- c('mp', 'per', 'orb', 'drb', 'trb', 'ows', 'dws', 'ws', 'ws_48', 'obpm', 'dbpm', 'bpm', 'vorp')
+
+nba_final2 <- nba_sin_categoricas %>% select_at(vars(-variables))
+
+set.seed(1234)
+filas_data <- nrow(nba_final2) # número de filas 
+num_data_test <- 10
+train <-  sample(filas_data ,filas_data - num_data_test)
+
+
+nba_train <- nba_sin_categoricas[train,] # data de entrenamiento
+nba_test  <-  nba_sin_categoricas[-train,] # data para el test
+
+```
+
+
+```{r message=TRUE, warning=TRUE, include=FALSE}
+nba_train_x <- model.matrix(salary ~ ., nba_train)[, -1]
+nba_train_y <- nba_train$salary
+
+nba_test_x <- model.matrix(salary ~ ., nba_test)[, -1]
+nba_test_y <- nba_test$salary
+
+```
+
+```{r fig.align='center', fig.height=10, fig.width=10, message=TRUE, warning=TRUE, include=FALSE}
+
+lasso_nba    <- glmnet(nba_train_x, nba_train_y, alpha = 1.0) 
+elastic1_nba <- glmnet(nba_train_x, nba_train_y, alpha = 0.2) 
+elastic2_nba <- glmnet(nba_train_x, nba_train_y, alpha = 0.8) 
+ridge_nba    <- glmnet(nba_train_x, nba_train_y, alpha = 0.0)
+
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1)
+plot(lasso_nba, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1_nba, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2_nba, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge_nba, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+
+```
+```{r  message=TRUE, warning=TRUE, include=FALSE}
+
+nba_id <- sample(1:10, size = length(nba_train_y), replace = TRUE)
+
+nba_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1),
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+nba_grid
+```
+```{r message=TRUE, warning=TRUE}
+for(i in seq_along(nba_grid$alpha)) {
+  
+ 
+  fit <- cv.glmnet(nba_train_x, nba_train_y, alpha = nba_grid$alpha[i], foldid = nba_id)
+  
+ 
+  nba_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  nba_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  nba_grid$lambda_min[i] <- fit$lambda.min
+  nba_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+nba_grid
+```
+Se observan peores resultados que el modelo anterior. Incluso con el mejor alpha, el error es mayor al anterior modelo.
+
+# Conclusiones 
+
+Tras realizar este trabajo, se llega a la conclusión de que los distintos modelos elaborados para predecir el salario de un jugador mantienen un error bastante elevado al igual que ocurría en el anterior trabajo. Se podrían realizar más modelos, como en el anterior trabajo, seleccionando los datos que aporten información al estudio ya que hay jugadores que apenas han tenido minutos en toda la temporada y también hay variables como la edad que se podría valorar como una variable polinomica ya que podriamos suponer que cuando un jugador empieza su carrera en la NBA tiene un salario fijo y a medida que van aumentando sus años de experiencia este sueldo es donde podría variar.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
