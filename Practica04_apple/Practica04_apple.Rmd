@@ -1,0 +1,242 @@
+---
+title: 'Practica04: Ventas Apple'
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "15/11/2020"
+output:
+ prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://as-images.apple.com/is/og-default?wid=1200&hei=630&fmt=jpeg&qlt=95&op_usm=0.5,0.5&.v=1525370171638" width="600px">
+</p>
+</div>
+
+
+## Objetivo del trabajo
+
+El objetivo es predecir las ventas de Apple. Para ello, hemos acudido a Bloomberg y hemos obtenido los datos trimestrales desde el 2T de 2008 hasta el 3T del 2017. Se debe elegir el modelo ETS y el modelo ARIMA que mejor predice las ventas, habiendo dejado fuera de la estimación los trimestres del 2017. Una vez seleccionado el modelo se estimara el modelo con todos los datos y se harán las predicciones del año 2017 y 2018.
+
+
+
+## Librerías que se van a emplear
+
+```{r, message=TRUE, warning=TRUE}
+library(readr)
+library(janitor)
+library(here)
+library(ggplot2)
+library(magrittr)
+library(skimr)
+library(Hmisc)
+require(forecast)
+require(xts)
+require(ggplot2)
+```
+
+
+
+## Dataset 
+
+Datos trimestrales delas ventas de Apple desde el 2T de 2008 hasta el 3T del 2017.
+
+```{r echo=FALSE}
+
+data <- read.csv2('./data/IngresosApple.csv')
+ventas <- data$Ingresos
+
+fecha <- seq(as.Date('2008/04/01'),as.Date('2017/07/01'), by = 'quarter')
+
+head(data)
+```
+
+## Análisis descriptivo
+
+```{r echo=FALSE}
+colnames(data)
+skim(data)
+describe(data)
+```
+
+
+## Modelos ETS 
+
+Primero hay que realizar una función constructora para crear un objeto de serie temporal extensible (xts) para guardar los índices del dato.
+
+```{r echo=FALSE}
+# Create a XTS object
+
+xventas <- xts(ventas, order.by = fecha)
+head(xventas)
+```
+
+
+### Gráfico de las ventas a través del horizonte temporal
+
+```{R echo=FALSE, message=TRUE, warning=TRUE}
+# plot series
+
+autoplot(xventas) + ylab("Ventas") + ggtitle("Ventas Trimestrales Apple") + 
+  xlab("Trimestres")
+
+df_new <- data.frame(value = as.vector(xventas),
+                     time = time(xventas))
+ggplot(df_new) + geom_point(aes( x = time,y = value)) + geom_line(aes(x = time,y = value)) + 
+  ylab("Ventas") + ggtitle("Ventas Trimestrales de Apple") + xlab("Trimestres")
+
+```
+Se observa una tendencia creciente pero del mismo se aprecia que la serie no oscila entorno a una media y se obsercan picos similares entre algunos trimestres que hacen sospechar de cierta estacionalidad.
+
+### Creación de la muestra para realizar las predicciones
+
+```{r echo=FALSE}
+omision_muestra <- 3
+
+total_observaciones <- length(xventas)
+
+#sub_muestra
+
+muestra_ventas <- window(xventas,start = index(xventas[1]), 
+                         end = index(xventas[total_observaciones - omision_muestra]))
+
+head(muestra_ventas)
+tail(muestra_ventas)
+```
+
+Se realiza una muestra con el objetivo de poder realizar predicciones de las ventas de Apple mediante el empleo de modelos ETS.
+
+### Selección del modelo ETS
+
+El método ETS (Error, Trend, Seasonal) es un método de aproximación para pronosticar series de tiempo univariadas. Este modelo ETS se centra en los componentes de tendencia y estacionales. La flexibilidad del modelo ETS radica en su capacidad de tendencia y componentes estacionales de diferentes rasgos.
+
+```{r echo=FALSE}
+modelo_ets <- ets(muestra_ventas)
+```
+
+### Modelo para el forecast
+```{r echo=FALSE}
+forecast_modelo_ets <- forecast(modelo_ets)
+```
+
+```{r echo=FALSE}
+summary(forecast_modelo_ets)
+```
+
+Predicciones de 2017- 2018
+
+### Comparación valores actuales y predicción
+```{r echo=FALSE}
+matrix(c(forecast_modelo_ets$mean[1:omision_muestra],
+         xventas[(total_observaciones - omision_muestra + 1):total_observaciones]),
+       ncol = 2)
+```
+
+Se comparan los datos reales con los que han conseguido predecir con el modelo y vemos que existe un error significativo entre el modelo y la realidad.
+
+### Predicciones y Precisión
+```{r echo=FALSE}
+tsventas <- ts(coredata(xventas), start = c(2008, 2), frequency = 4)
+modelo_ets <- ets(window(tsventas, end = 2016 + 3/4))
+ets_forecast_ventas <- forecast(modelo_ets,h = omision_muestra)
+forecast:::testaccuracy(ets_forecast_ventas$mean,window(tsventas, start = 2017),
+                        test = NULL, d = NULL, D = NULL)
+
+```
+Podemos confirmar con el MSE que obtenemos del modelo ETS que el error en las predicciones es bastante sigificativo a la hora de realzar predicciones.
+
+
+## Modelos ARIMA
+
+El modelo ARIMA nos premite describir un valor como una función lineal de datos anteriores y errores debidos al azar, además, puede incluir un componente estacional. Es decir, debe contener todos los elementos necesarios para describir el fenómeno. 
+
+```{R echo=FALSE}
+autoplot(xventas)+ylab("Ventas")+ggtitle("Ventas Trimestrales de Apple")+xlab("Trimestres")
+```
+
+Transformarmos los ingrsos en logaritmo para que la serie se vuelva más estacionaria.
+
+```{R echo=FALSE}
+xlventas <- log(xventas)
+```
+
+### Diferencias
+
+```{R echo=FALSE}
+ggtsdisplay(xlventas)
+```
+
+Las líneas azules hacen contraste de hipótesis para ver si hay correlación o no. Si están dentro de las bandas es estadísticamente igual a 0, si están fuera estadísticamente hay una correlación. No estacionario es algo de hace mucho tiempo que sigue explicando lo de hoy en el acf como ocurren en este caso, por lo que esta serie es no estacionaria.
+
+Se observa que las ventas de un día dependen del día anterior y éste del día anterior como se ve en el ACF. Por ello se le aplica una diferencia regular. Ahora las ventas oscilan entorno a una media. 
+```{R echo=FALSE, message=TRUE, warning=TRUE}
+ggtsdisplay(diff(xlventas))
+```
+
+Se aprecia una estacionalidad cada 4 trimestres, o lo que es lo mismo, cada año en el mismo trimestre se aprecia una misma tendencia.
+
+```{R echo=FALSE, message=TRUE, warning=TRUE}
+ggtsdisplay(diff(xlventas, 4)) # PACF corta en 1
+```
+
+
+```{R echo=FALSE, message=TRUE, warning=TRUE}
+ggtsdisplay(diff(diff(xlventas,4),1))
+```
+
+
+### Realización del modelo ARIMA
+
+```{R}
+modelo_arima <- auto.arima(muestra_ventas, lambda = 0)
+summary(modelo_arima)
+
+```
+
+
+Obtenemos un modelo ARIMA (0,1,1). Podríamos hablar de un modelo con una diferencia estacional y no estacional. Este es esencialmente un modelo de suavizado exponencial estacional.
+
+# Análisis de los residuos
+```{R}
+ggtsdisplay(modelo_arima$residuals)
+```
+
+# Predicción ARIMA
+```{R echo=FALSE}
+forecast_modelo_arima <- forecast(modelo_arima)
+
+summary(forecast_modelo_arima)
+```
+
+Se observan las predicciones del modelo ARIMA de los años 2017 y 2018.
+
+# Comparación valores actuales y predicción
+```{R}
+matrix(c(forecast_modelo_arima$mean[1:omision_muestra],
+         xventas[(total_observaciones - omision_muestra + 1):total_observaciones]),
+       ncol = 2)
+```
+
+Se comparan los datos reales con los que han conseguido predecir con el modelo y vemos que existe un error significativo entre el modelo y la realidad como ocurría anteriormente con los modelos ETS.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
