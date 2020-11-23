@@ -1,0 +1,301 @@
+---
+title: 'Práctica 05: Colgate vs Crest'
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "22/11/2020"
+output:
+  prettydoc::html_pretty:
+    theme: leonids
+    highlight: github
+---
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://minty-fresh.com/wp-content/uploads/2017/12/crest-vs-colgate.png" width="600px">
+</p>
+</div>
+
+
+## Objetivo del trabajo
+
+El objetivo es predecir las 16 semanas del año 1963, para las dos cuotas de mercado, por lo que se dejará fuera de la muestra este periodo muestral.
+
+El análisis debe incluir para las dos series la estimación de un modelo ARIMA, la detección de atípicos/outlier y un modelo de interveción. Por último se debe realizar un modelo de función de tranferencia entre las dos cuotas.
+
+
+## Librerías
+
+```{r message=FALSE, warning=FALSE}
+library(openxlsx)
+library(xts)
+library(TSA)
+library(ggplot2)
+library(forecast)
+library(zoo)
+library(here)
+library(tsoutliers)
+library(lmtest)
+```
+
+## Dataset
+
+```{r echo=FALSE}
+data <- read.xlsx(("./data/data.xlsx"), colNames = TRUE, detectDates = TRUE)
+head(data)
+```
+
+El dataset se compone por 276 observaciones y 4 variables, de las cuales dos corresponden a las cuotas de mercado de Colgate y Crest, ambas dedicadas al sector dentrífico. El resto de variables correponden al periodo temporal de cada cuota de mercado alcanzada separada por el año y la semana. Estas dos variables, habrá que modificarlas para realizar el análisis.
+
+## Exploración de los datos
+
+En este dataset se ha comprobado que no existe ningún tipo de valor perdido en las series temporales. 
+
+```{r echo=FALSE}
+sum(is.na(data)) 
+```
+```{r echo=FALSE}
+
+crest <- data$Crest
+colgate <- data$Colgate
+generateDate <- seq(as.Date('1958/01/08'), as.Date('1963/04/23'), by = 'week')
+xcrest <- xts(crest, order.by = generateDate)
+xcolgate <- xts(colgate, order.by = generateDate)
+
+xcrest <- to.weekly(xcrest)
+zcrest <- as.zoo(xcrest$xcrest.Close)
+xcolgate <- to.weekly(xcolgate)
+zcolgate <- as.zoo(xcolgate$xcolgate.Close)
+
+```
+
+
+## Gráficas de las series temporales
+
+```{r echo=FALSE}
+data_comparacion_temporal <- ts(data[,c(3,4)], start = 1958, frequency = 52)
+```
+
+
+
+```{r echo=FALSE}
+autoplot(data_comparacion_temporal, facets = FALSE) +
+  ggtitle("Colgate vs Crest") +
+  xlab("Tiempo") +
+  ylab("Cuota de Mercado")
+```
+
+En esta gráfica se muestra la evolución temporal de las cuotas de mercado tanto de Colgate como de Crest. De la misma forma podemos apreciar una primera comparación de ambas series. Se observa una tendencia general creciente en la serie de Crest durante los años, especialmente en 1960 donde además no parece haber una estacionalidad aunque más adelante se realizará un estudio de esta. Por otro lado, Colgate, tiene una tendencia bajista en cuanto a su cotización a diferencia de lo que veíamos con Crest, incluso se podrá decir que en el 1960 donde Crest tuvo un pico alto en cuanto a su cotización, Colgate sufrió una bajada. También se puede comentar a priori que las cotizaciones de Crest no parecen estacionarias a diferencia de Colgate donde se podría decir que la serie es un poco más estacionaria o que oscila sobre una media.
+
+
+
+```{r echo=FALSE}
+autoplot(zcrest) + geom_point() +
+  ylab("Ventas") + ggtitle("Cuota Crest") + xlab("Semanas") + 
+  ggtitle("Cuota Crest")
+```
+
+Por una parte, si observamos las series por separadas, podemos ver que en cuanto a Crest, ésta tiene una tendencia alcista y vemos que hay un escalón en 1960 puesto que las medias de las cotizaciones no vuleven a los valores iniciales. Este escalón probablemente se debió a un hecho que ocurrió en ese instante de tiempo. Comparando con el gráfico anterior podemos ver que Crest tuvo una fuerte posición en el mercado de dentríficos durante estos años.
+
+
+```{r echo=FALSE}
+autoplot(zcolgate) + geom_point() +
+  ylab("Ventas") + ggtitle("Cuota Colgate") + xlab("Semanas") + 
+  ggtitle("Cuota Colgate")
+
+```
+
+Por otra parte, Colgate, tiene un tendencia bajista a lo largo de los años sin una aparente estacionalidad. Como se puede observar tambien en este gráfico a parte de la ausencia de estacionariedad, podemos decir que tampoco tiene estacionalidad por que la cuota de mercado no se ve afectada por el mes en el que nos encontremos. Nuestra serie temporal es no estacionaria en media cuando tiene tendencia creciente o decreciente o cambios de nivel.
+
+
+
+## Modelo Arima
+
+Como parte de los subobjetivos del análisis se procede a realizar los Modelos ARIMA para ambas marcas. Para ello, hay que convertir las variables a tipo zoo para poder realizar las predicciones. 
+
+### Modelo ARIMA para Colgate
+
+
+```{r echo=FALSE}
+
+omision_muestra <- 16
+
+total_observaciones <- length(zcolgate)
+
+#sub_muestra
+
+ocolgate <- window(zcolgate,start = index(zcolgate[1]), 
+                         end = index(zcolgate[total_observaciones - omision_muestra]))
+
+ocrest <- window(zcrest,start = index(zcrest[1]), 
+                         end = index(zcrest[total_observaciones - omision_muestra]))
+
+```
+
+
+```{r echo=FALSE}
+modelo_arima_colgate = auto.arima(ocolgate)
+summary(modelo_arima_colgate)
+```
+
+Obtenemos un modelo ARIMA en ambas series de orden (0,1,1). Es un modelo conocido como suavizado exponencial simple, en el cual, es mejor en vez de tomar la última media como único dato, tomar el promedio de las últimas observaciones para filtrar el ruido y estimar con mayor precisión la media local. El pronóstico de suavización exponencial simple es óptimo para patrones de demanda aleatorios o nivelados donde se pretende eliminar el impacto de los elementos irregulares históricos mediante un enfoque en períodos de demanda reciente para lograr óptimos resultados.
+
+
+
+```{r echo=FALSE}
+ggtsdisplay(modelo_arima_colgate$residuals)
+```
+
+Como se observa por los residuos, la serie temporal no es estacionaria, lo que tenemos que hacer es convertirla en estacionaria, mediante la diferenciación de orden D, una buena estrategia es comparar los ACF,que son los correlogramas de de la función de autocorrelación. Como podemos observar en ambas, todos los datos se encuentran dentro de las bandas azules, eso nos indica que los residuos son ruido blanco y por tanto podemos continuar con el análisis.
+
+
+
+```{r echo=FALSE}
+Box.test(modelo_arima_colgate$residuals,lag = 3, fitdf = 3, type = "Lj")
+Box.test(modelo_arima_colgate$residuals,lag = 8, fitdf = 3, type = "Lj")
+Box.test(modelo_arima_colgate$residuals,lag = 12, fitdf = 3, type = "Lj")
+fventas.arima = forecast(modelo_arima_colgate)
+```
+
+En la prueba de Box-Ljung se observa que para distintos retardos en los residuos de Colgate el p-valor es significativo pasado los tres retardos y por lo tanto se rechaza la hipótesis nula de que la serie de tiempo no está autocorrelacionada. Con tres retardos se acepta la hipótesis nula y por lo tanto podemos concluir que si existe autocorrelación en 3 periodos.
+
+
+```{r  echo=FALSE}
+fcolgate <- forecast(modelo_arima_colgate, h = 16)
+plot(fcolgate)
+head(summary(fcolgate))
+```
+
+### Modelo Arima: Crest
+
+
+```{r echo=FALSE}
+modelo_arima_crest = auto.arima(ocrest)
+summary(modelo_arima_crest)
+```
+
+Al igual que ocurría con Colgate, obtenemos un modelo ARIMA en ambas series de orden (0,1,1), también llamado modelo suavizado exponencial. 
+
+```{r echo=FALSE}
+ggtsdisplay(modelo_arima_crest$residuals)
+```
+
+
+```{r echo=FALSE}
+Box.test(modelo_arima_crest$residuals,lag = 3, fitdf = 3, type = "Lj")
+Box.test(modelo_arima_crest$residuals,lag = 8, fitdf = 3, type = "Lj")
+Box.test(modelo_arima_crest$residuals,lag = 12, fitdf = 3, type = "Lj")
+fventas.arima = forecast(modelo_arima_crest)
+```
+
+En la prueba de Box-Ljung se observa que para distintos retardos en los residuos de Crest el p-valor es significativo pasado los tres retardos y por lo tanto se rechaza la hipótesis nula de que la serie de tiempo no está autocorrelacionada. Con tres retardos se acepta la hipótesis nula y por lo tanto podemos concluir que si existe autocorrelación en 3 periodos.
+
+```{r echo=FALSE}
+fcrest = forecast(modelo_arima_crest, h = 16)
+plot(fcrest)
+```
+
+## Outliers detectados
+
+Ahora vamos a proceder analizar los outliers tanto aditivos(afectan a la serie temporal) e innovativos(afectan al error) entonces vamos a analizar, los outliers para ambas compañías.
+
+```{r echo=FALSE}
+detectAO(modelo_arima_colgate) 
+detectAO(modelo_arima_crest) # outlier que afecta a la serie temporal 
+checkresiduals(modelo_arima_colgate)
+```
+
+Los valores atípicos AO son aquellos valores que afectan negativamente a nuestra serie temporal. En este caso, los valores atípicos que afectan a neustra serie son las semanas 135, 136 y 138 principalmente en la serie de Crest. Se podría decir que en esas semanas, Crest sufrió ese cambió que le permitió aumentar su cotización. Se observa también que los residuos siguen una distribución normal.
+
+```{r echo=FALSE}
+detectIO(modelo_arima_colgate) # outlier que afecta a la serie temporal 
+detectIO(modelo_arima_crest) # outlier que afecta a la serie temporal 
+checkresiduals(modelo_arima_crest)
+```
+
+En ambas series no se han detectado valores atípico que puedan llegar a afectar al error de las series (IO). De la misma forma para estos valores, los residuos siguen una distribución normal.
+
+## Modelo de Intervención
+
+Con este modelo vamos a tratar de ver la importancia de la decisión de la ADA
+
+
+```{r echo=FALSE}
+
+arimax_colgate <- arimax(ocolgate, order = c(0, 1, 1),
+                        xtransf = data.frame(first = 1*(seq(ocolgate) >= 135)
+                        ),
+                        transfer = list(c(0,0)),
+                        method = 'ML') 
+
+arimax_crest <- arimax(ocrest, order = c(0, 1, 1), 
+                      xtransf = data.frame(primero = 1*(seq(ocrest) >= 135)),
+                      xreg = data.frame(error136 = 1*(seq(ocrest) == 136),
+                                        error138 = 1*(seq(ocrest) == 138)),
+                      transfer = list(c(0,0)),
+                      method = 'ML') 
+
+```
+
+```{r echo=FALSE}
+coeftest(arimax_colgate)
+coeftest(arimax_crest)  
+```
+
+Ahora realizamos el test de los coeficientes, en ambos casos la observación 135, que hemos mostrado anteriormente por la detección de outliers, tiene una significatividad alta, y por tanto será este el valor de corte en nuestro modelo de intervención.
+
+
+## Función de Transferencia
+
+Se realiza una función de transferencia de donde tanto de Crest como de Colgate tomamos los 134 primeros valores, ya que a partir del 135 que es nuestra fecha de intervención los valores empiezan a cambiar para ambas series. También se les aplicará una diferencia regular ya que es necesario arreglar el problema de la estacionalidad.
+
+```{r echo=FALSE}
+crest_134 <- window(crest, end = 134) 
+colgate_134 <- window(colgate, end = 134) 
+crest_134_diff <- diff(crest_134) 
+colgate_134_diff <- diff(colgate_134) 
+```
+
+
+```{r echo=FALSE}
+modelo_transferencia <- arimax(colgate_134_diff,
+               order = c(0,1,1),
+               include.mean = TRUE,
+               xtransf = crest_134_diff,
+               transfer = list(c(0,15)), 
+               method = "ML")
+coeftest(modelo_transferencia)
+```
+
+
+Obtenemos que los únicos coeficientes que nos aportan información son el primero y el segundo y por ello nuestro análisis se aplicará sobre estos dos coeficientes.
+
+```{r echo=FALSE}
+plot(modelo_transferencia$coef[2:15], type = 'h')
+```
+
+```{r echo=FALSE}
+modelo_transferencia_final <- arimax(colgate_134_diff, 
+              order = c(0,1,1), 
+              include.mean = TRUE, 
+              fixed = c(NA,NA,0,0,NA),
+              xtransf = crest_134_diff,
+              transfer = list(c(1,2)), 
+              method = "ML")
+
+summary(modelo_transferencia_final)
+```
+
+En el gráfico anterior podemos interpretar que para Colagte, el primer periodo a partir de la semana 135, se observa que como se ha producido una caida en su cotización de Colgate mientras que puede haber coincidido con el alza de Crest. 
+
+
+
+
+
+
+
+
+
+
+
