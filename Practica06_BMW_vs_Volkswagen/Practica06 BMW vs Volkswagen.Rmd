@@ -1,0 +1,288 @@
+---
+title: 'Caso Práctico 06: BMW vs Volkswagen'
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "27/11/2020"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://car-images.bauersecure.com/pagefiles/69135/znvuvwbmw-001.jpg">
+</p>
+</div>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Descripción y objetivos del trabajo
+
+Utilizando datos diarios de los dos series desde el año 2014, debemos analizar la relación entre BMW y Volkswagen, contestando a las siguiente preguntas:
+
+* ¿Estimar el modelo garch de BMW?
+* Plantear un modelo VAR mensual entre los dos activos.
+
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(quantmod) 
+library(forecast)
+library(fGarch)
+library(vars)
+library(ggplot2)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#get data from yahoo
+bmw <- getSymbols("BMW.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+volkswagen <- getSymbols("VOW3.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+
+#Define workdata
+
+xbmw = Ad(bmw)
+xvolkswagen = Ad(volkswagen)
+
+### Generar rentabilidad diaria
+
+#Calculate Daily Arithmetic Return
+
+rbmw = dailyReturn(xbmw, type = 'log',leading = FALSE)
+rvolkswagen = dailyReturn(xvolkswagen, type = 'log',leading = FALSE)
+
+
+# Exclude NA (First data)
+
+rbmw = na.exclude(rbmw)
+rvolkswagen = na.exclude(rvolkswagen)
+
+```
+
+## Exploración de los datos
+
+Se ha recogido los rendimientos diarios de las dos cotizaciones y se han excluido todos los valores pérdidos que no se han podido recoger en el dataset. En primer lugar, vamos a observar la evolución y el comportamiento de las cotizaciones de ambas series y se va a estudiar sus rendimientos y sus posibles variaciones.
+
+### Análisis de BMW
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+autoplot(xbmw, facets = FALSE) +
+  ggtitle("Cotización de BMW") +
+  xlab("Tiempo") +
+  ylab("Cuota de Mercado")
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+plot.zoo(cbind(xbmw, rbmw),main = paste("BMW y Rentabilidad"),xlab = "años",ylab = c("Precio","rentabilidad"))
+grid(lwd = 2)
+```
+
+En estas gráficas podemos ver que los rendimientos de BMW sufren dos tendencias que se podrían considerar atípicas, un pico ascendente en 2015, periodo en el que BMW cerró el año con un aumento del 10% en los beneficios, hasta sobrepasar los 6.000 millones de euros por primera vez (6.396 millones), respecto a los 5.817 que alcanzó en 2014. Además, registra un nuevo récord hasta la fecha para los volúmenes de ventas. Este periodo también coincide con la bajada en las ventas de uno de sus competidores como es Volkswagen. Otro de los cambios de tendencia con un pico bajista es el que ha sufrido en 2020 a causa del coronavirus. 
+
+
+### Gráficas de Volkswagen
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+autoplot(xvolkswagen, facets = FALSE) +
+  ggtitle("Cotización de Volkswagen") +
+  xlab("Tiempo") +
+  ylab("Cuota de Mercado")
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+plot.zoo(cbind(xvolkswagen, rvolkswagen),main = paste("Volkswagen y Rentabilidad"),xlab = "años",ylab = c("Precio","rentabilidad"))
+grid(lwd = 2)
+```
+
+Al igual que BMW, Volkswagen sufre dos cambios de tendencia significantes en 2015 y 2020, ambas negativas. En 2015 salió a la luz que Volkswagen había instalado ilegalmente un software para alterar los resultados de los controles técnicos de emisiones contaminantes en 11 millones de automóviles con motor diésel, vendidos entre 2009 y 2015. Como resultado de dicho fraude, sus motores habían superado con creces los estándares de la Agencia de Protección Ambiental de Estados Unidos. En 2020 se vio afectada por la pandemia.
+
+## Investigar un modelo GARCH para BMW
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+# ACF & PACF 
+# VolProxy=abs(dRentCont) # absolute value
+VolProxy = rbmw ^ 2 #squared
+tsdisplay(VolProxy) 
+```
+
+Con esta gráfica podemos ver que la volatilidad de BMW no es ruido blanco ya que sus valores se encuentran fuera de las bandas, por lo que realizar un modelo GARCH en este caso sería lo más apropiado. 
+
+### Test de Lagrange
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+#LM test
+archTest <- function(rtn,m=10){
+  # Perform Lagrange Multiplier Test for ARCH effect of a time series
+  # rtn: time series
+  # m: selected AR order
+  # TSAY(2013)
+  y = (rtn - mean(rtn))^2
+  T = length(rtn)
+  atsq = y[(m + 1):T]
+  x = matrix(0,(T - m),m)
+  for (i in 1:m) {
+    x[,i] = y[(m + 1 - i):(T - i)]
+  }
+  md = lm(atsq~x)
+  summary(md)
+}
+
+archTest(rbmw,20)
+```
+
+Se observa que el p-valor es inferior al nivel de significación por lo que existe la posibilidad de realizar un modelo GARCH.
+
+En primer lugar realizaremos un modelo ARCH 1
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#ARCH(1)
+m1 = garchFit(~1+garch(1,0),data = rbmw,trace = F) # Fit an ARCH(1) model
+```
+
+Modelo ARCH 1 estima solo hasta el alfa 1. Como resultados, se obtiene que los dos primeros son los tests de normalidad (Jaque-Bera y Shapiro-Wilk) y podemos ver que no siguen una distribución normal.
+El resto de valores nos indican que son ruido blanco. Por lo tanto el modelo GARCH que se ha estimado no es correcto puesto que los errores al cuadrado son ruido blanco y se sigue teniendo errores GARCH.
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+resi = residuals(m1,standardize = T) #residuals
+resi = xts(resi,order.by = index(rbmw)) #residuals as xts
+tsdisplay(resi^2)
+```
+
+Al analizar los errores, se observa que éstos siguen teniendo errores GARCH, por lo que se propone un modelo GARCH (1,1).
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+m2 = garchFit(~1+garch(1,1),data = rbmw,trace = F) # Fit an GARCH(1,1) model
+# nos muestra que no hay errores GARCH
+resi = residuals(m2,standardize = T) #residuals
+resi = xts(resi,order.by = index(rbmw)) #residuals as xts
+tsdisplay(resi^2) #acf pacf residuals
+```
+
+```{R echo=FALSE, fig.height=5, fig.width=10}
+plot(m2, which = 13)
+```
+
+El modelo GARCH (1,1) nos muestra que no hay errores GARCH y al analizar us volatilidad  se observa que al final del periodo, la volatilidad de los rendimientos es más alta, lo que puede estar acorde con el periodo de coronavirus. El qq plot nos muestra que los errores en las colas no son normales. Esto es típico en las series de rendimientos y se va a proceder a su corrección suponiendo un modelo GARCH donde los errores siguen una t-student (media 0 y dt = 1).
+
+### t-student 
+
+```{R echo=FALSE, message=FALSE, warning=FALSE}
+#t-student
+m3 = garchFit(~1+garch(1,1),data = rbmw,trace = F,cond.dist = "std")
+```
+
+```{R echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+#t-student
+plot(m3, which = 13)
+```
+
+El qq plot tiene muchos menos puntos que antes a pesar de que sigue teniendo algún atípico. Los problemas siempre vienen en las caídas negativas en finanzas.
+
+```{R echo=FALSE, fig.height=5, fig.width=10}
+v1 = volatility(m3)  # Volatilidad anual
+v1 = xts(v1,order.by = index(rbmw)) #  volatility as XTS
+plot(sqrt(252)*v1) # Volatilidad anual 
+
+resi = residuals(m3,standardize = T) # Standardized residuals
+resi = xts(resi,order.by = index(rbmw)) # Standardized residuals as XTS
+tsdisplay(resi^2) # comprobamos que son ruido blanco los errores
+```
+
+Sigue habiendo errores que no son ruido blanco, esto se puede deber a que a la hora de realizar las predicciones y la reciente situación de coronavirus que ha supuesto un cambio significante en la evolucion de los rendimientos de BMW pueda afectar a nuestro modelo de predicción.
+
+### Predicción modelo GARCH
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+# predice la media y la volatilidad (std. deviation)
+predict(m3,n.ahead = 20,plot = TRUE,conf = .9,nx = 100) 
+```
+
+
+
+## Plantear un modelo VAR mensual entre los dos activos
+
+En primer lugar se obtienen los rendimientos mensuales de ambas series temporales
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+rbmw_monthly = monthlyReturn(xbmw, type = 'log',leading = FALSE)
+rvolkswagen_monthly = monthlyReturn(xvolkswagen, type = 'log',leading = FALSE)
+# generar vector
+bmw_vw = cbind(rbmw_monthly,rvolkswagen_monthly) # vector con las dos series temporales
+# Mis rendimientos son estacionarios
+
+colnames(bmw_vw) = c("BMW","Volkswagen")
+bmw_vw = na.omit(bmw_vw)
+head(bmw_vw)
+```
+
+### Selección del modelo VAR
+
+```{r include=FALSE}
+VARselect(bmw_vw) # ver que modelo selecciona
+```
+
+Mediante el criterio de información AIC se selecciona el 1 (número de retardos), por lo que p será igual a 1 y k será igual a 2 puesto que en este caso el número de las variables de las que disponemos son dos.
+
+### Estimamos el modelo VAR
+
+```{r echo=FALSE}
+model.var = VAR(bmw_vw)
+summary(model.var)
+```
+
+Realizando la estimación del modelo previamente obtenido, se observa que desde el punto de vista estadístico es un modelo óptimo a pesar de su baja explicación como nos muestra el R^2 ajustado. A partir de aquí se observa la eficiencia desde el punto de vista predictivo. Por lo que se realizará un modelo VAR sin las constantes.
+
+```{r include=FALSE}
+model.var1 = VAR(bmw_vw,type = "none") # le quito la constante
+```
+
+Obtenemos que el modelo mejora un poco con respecto al anterior en cuanto a su R^2 ajustado.
+
+### Causalidad de granger
+
+```{r message=FALSE, warning=FALSE}
+causality(model.var1)
+```
+
+Vemos que le ocurre al modelo. Nos sirve para ver si hay efecto bidireccional. La hipotesis nula es que BMW no causa a Volkswagen y por ello la aceptamos. Este modelo nos vale y esto nos dice que sí que hay una relación instantánea. Son relaciones dinámicas por lo que los modelos VAR sí que nos sirven en este caso.
+
+A continuación observaremos la respuesta a un impulso, es decir, como afectaría una subida de BMW como afectaría a Volkswagen. Solo podemos ver los efectos que tiene una variable sobre otra.
+
+```{r echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+model.ri = irf(model.var1)
+plot(model.ri)
+```
+
+
+### Predicción modelo VAR
+
+```{r echo=FALSE, fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+forecast <- predict(model.var1, n.ahead = 8, ci = 0.95)
+fanchart(forecast, names = "RRP", main = "Fanchart for RRP", xlab = "Horizon", ylab = "RRP")
+```
+
+## Conclusiones
+
+Las conclusiones que obtenemos es que para BMW se puede realizar un modelo GARCH (1,1) sobre los rendimientos diarios mientras que para analizar los rendimientos mensuales de las dos series podemos realizar modelos VAR ya que tienen relaciones dinámicas. En cuanto a las dos series podemos concluir que siguen una misma tendencia dentro del mercado de automóviles, mientras Volkswagen tuvo el escándalo de emisiones contaminantes en 2015 que le llevó a una bajada significativa de sus ingresos, BMW se mantuvo dentro del mercadi y en ese año llegó a su pico en cuanto a la cifra de ingresos. Se podrá afirmar que de las malas decisiones de una empresa se pudo aprovechar otra. Aunque también si miramos en el año 2020 vemos que ambas tienen un comportamiento negativo debido a la pandemia. Esto puede ser un hecho significativo a la hora de realizar predicciones ya que la información más importante para hacer estas predicciones se basa en el corto plazo, entonces el comportamiento de la serie se explicaría a partir de un impulso.
+
+
+
+
+
+
+
+
+
+
+
+
+
