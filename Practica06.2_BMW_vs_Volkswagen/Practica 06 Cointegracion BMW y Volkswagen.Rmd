@@ -1,0 +1,143 @@
+---
+title: 'Practica 06: Cointegración BMW y Volkswagen'
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "6/12/2020"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://car-images.bauersecure.com/pagefiles/69135/znvuvwbmw-001.jpg">
+</p>
+</div>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Descripción y objetivos del trabajo
+
+Siguiendo con la anterior práctica y utilizando los datos diarios de las dos series desde el año 2014, debemos analizar la cointegración que puede existir entre BMW y Volkswagen. 
+
+
+## Trading de Pares
+
+Para este trabajo usaremos la librería Pair Trading o trading de Pares. El trading de pares consiste en localizar dos activos financieros que sigan la misma tendencia que en un momento se separa pero despues siguen la misma tendencia. Es muy util dentros de los hedge fund.
+Peligro: 2 series estan cointegradas pero nada te asegura de que vuelvan a estar en equilibrio
+Por ello, establecemos stock loss.  
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(quantmod)
+require(devtools)
+library(PairTrading)
+library(urca)
+```
+
+
+## Carga de datos
+
+Para este trabajo emplearemos las series temporales sobre las cotizaciones de BMW y Volkswagen desde el 1 de enero de 2014 hasta el 25 de noviembre de 2020.
+
+```{r message=FALSE, warning=FALSE}
+bmw <- getSymbols("BMW.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+volkswagen <- getSymbols("VOW.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+xbmw = Ad(bmw)
+xvolkswagen = Ad(volkswagen)
+
+```
+
+```{r echo=FALSE}
+xbmw = na.exclude(xbmw)
+xvow = na.exclude(xvolkswagen)
+price_pair = merge(xbmw,xvow)
+```
+
+```{r echo=FALSE}
+plot(price_pair)
+```
+
+
+## Análisis de Cointegración
+
+```{r echo=FALSE}
+adf.test(price_pair[,1],k = 0) # test dicky fuller. K es 0. Hipotesis nula es no estacionaria. Es no setacionaria y hay que hacer una diferencia
+adf.test(price_pair[,2],k = 0)
+```
+
+Realizamos el test de Dickey-Fuller donde k = 0. La hipótesis nula es que la serie no es estacionaria. El p-valor en ambas series es superior a 0.05 y por lo tanto la serie es no estacionario y habría que aplicar una diferencia.
+
+```{r echo=FALSE}
+adf.test(price_pair[,1],k = 6) # autoregresivo de orden 6 para saber si los errores no son estacionarias
+```
+
+Se observa que siguen siendo no estacionarios. A continuación seleccionamos la k empleando el criterio AIC con un máximo de 10 retardos.
+
+```{r echo=FALSE}
+test_1 <- ur.df(price_pair[,1],type = "none",selectlags = "AIC",lags = 10) # selecciona la k con AIC con maximo de 10 retardos
+summary(test_1) 
+```
+
+El resultado que obtenemos es -0.0977 y por lo tanto se considera estacionaria y no necesitaría una diferencia.
+
+A continuación aplicamos el mismo método, esta vez se selecciona mediante el criterio de tendencia.
+
+```{r echo=FALSE}
+test_2 <- ur.df(price_pair[,1],type = "trend",selectlags = "AIC",lags = 10) # selecciona con tendencia
+summary(test_2) # Value of test-statistic is: -2.4009 2.8114 3.5747. 
+# Solo hay que fijase en el tau3 para la estacionaridad
+```
+
+Value of test-statistic is: -3.1873 3.419 5.0948 
+
+Solo hay que fijarse en el tau3 para la estacionaridad.
+
+Ahora se estiman los parametros de la relación de equilibrio entre la serie de BMW  y la serie de Volkswagen.
+```{r results='hide', echo=FALSE}
+#Estimate parameters & plot spread
+reg <- EstimateParameters(price_pair, method = lm) # Estima los parametros de la relacion de equilibrio entre los dos pares
+str(reg) 
+plot(reg$spread)
+
+```
+
+Observando la gráfica, cuanto más abajo, existirá una mayor separación entre las series y por el contrario. Si la tendencia sigue hacia abajo podemos tener pérdidas. El spread es el error del modelo de equilibrio en la relacion a largo plazo. La cobertura en este caso sería de 0.586.
+
+
+```{r echo=FALSE}
+#check stationarity
+IsStationary(reg$spread, 0.1) # dicky fuller dice que si que es estacionario, pero el otro no. Hay que tener cuidado
+```
+Realizamos un otra vez el test de Dickey-Fuller nos dice que las dos series no son estacionarias por lo tanto hay que tener cuidado. 
+
+```{r echo=FALSE}
+#estimate parameters for back test
+params <- EstimateParametersHistorically(price_pair, period = 180) # coge 180 datos
+```
+
+```{r echo=FALSE}
+#create & plot trading signals
+signal <- Simple(params$spread, 0.05) # creo la señal. Cunaod debo de entrar y salir en funcion del spread
+plot(params$spread)
+par(new = TRUE)
+barplot(signal,col = "blue",space = 0, border = "blue",xaxt = "n",yaxt = "n",xlab = "",ylab = "")
+```
+
+En esta gráfica se observa la señal, que se ha calculado a partir de los parámetros del spread cogiendo 180 observaciones. La señal nos indica cuando se debe de entrar y salir en función del spread. La parte de arriba significa que estamos dentro en la estrategia y abajo fuera en la estrategia. En esta gráfica se supone que siempre nos encontramos dentro del mercado. En la parte superior nos encontrariamos comprando acciones de BMW mientras que vendemos acciones de Volkswagen.
+
+```{r echo=FALSE}
+#Performance of pair trading
+return.pairtrading <- Return(price_pair, lag(signal), lag(params$hedge.ratio))
+plot(100 * cumprod(1 + return.pairtrading)) # beneficio de la estrategia durante todo este tiempo
+```
+
+Esta gráfica nos muestra el beneficio de la estrategia anteriormente planteada durante todo este periodo. 
