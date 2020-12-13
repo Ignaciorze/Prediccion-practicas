@@ -1,0 +1,179 @@
+---
+title: 'Práctica 07: Casual Impact BMW y Volkswagen'
+author: "Ignacio Ruiz de Zuazu Echevarría"
+date: "6/12/2020"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+[link a GitHub](https://github.com/ignacio-ruiz-de-zuazu/Prediccion-practicas.git)
+
+
+<div>
+<p style = 'text-align:center;'>
+<img src="https://car-images.bauersecure.com/pagefiles/69135/znvuvwbmw-001.jpg">
+</p>
+</div>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objetivo del trabajo
+
+Utilizando datos diarios de los dos series desde el año 2014, debemos analizar la relación entre BMW y Volkswagen utilizando el modelo de Causal Impact, para estimar el efecto del diesel gate.
+
+
+
+```{r message=FALSE, warning=FALSE}
+library(CausalImpact)
+library(quantmod)
+```
+
+
+
+
+## Casual Impact 
+
+Este paquete de R implementa un enfoque para estimar el efecto causal de una intervención diseñada en una serie de tiempo. El paquete construye un modelo de series de tiempo estructural bayesiano. Luego, este modelo se usa para intentar predecir el contrafactual, es decir, cómo habría evolucionado la métrica de respuesta después de la intervención si la intervención nunca hubiera ocurrido.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+bmw <- getSymbols("BMW.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+volkswagen <- getSymbols("VOW.DE" ,from = "2014-01-01",to = "2020-11-25", auto.assign = FALSE)
+
+#Define workdata
+
+xbmw = Ad(bmw)
+xvolkswagen = Ad(volkswagen)
+
+```
+
+```{r echo=FALSE}
+xbmw = na.exclude(xbmw)
+xvow = na.exclude(xvolkswagen)
+price_pair = merge(xbmw,xvow)
+```
+
+### Casual Impact BMW
+
+```{r echo=FALSE}
+plot(price_pair$BMW.DE.Adjusted)
+```
+
+Para estimar un efecto causal, comenzamos especificando qué período de los datos debe usarse para entrenar el modelo (período de preintervención) y qué período para calcular una predicción contrafactual (período de postintervención). En este caso el preiodo de preintervención va desde el 1 de enero de 2014 hasta el 25 de septiembre de 2019 y el periodo de postintervención va desde el 26 de septiembre de 2019 hasta el 25 de noviembre de 2020.
+
+```{r echo=FALSE}
+pre_period <- as.Date(c("2014-01-01", "2019-9-25"))
+post_period <- as.Date(c("2019-9-26", "2020-11-25"))
+```
+
+```{r echo=FALSE}
+marketing_causal <- CausalImpact(xbmw, 
+                             pre.period = pre_period, 
+                             post.period = post_period)
+```
+```{r echo=FALSE}
+summary(marketing_causal)
+```
+
+```{r echo=FALSE}
+plot(marketing_causal)
+```
+
+
+De forma predeterminada, el gráfico contiene tres paneles. El primer panel muestra los datos y una predicción contrafactual para el período posterior al tratamiento. El segundo panel muestra la diferencia entre los datos observados y las predicciones contrafácticas. Este es el efecto causal puntual, estimado por el modelo. El tercer panel suma las contribuciones puntuales del segundo panel, lo que da como resultado un gráfico del efecto acumulativo de la intervención.
+
+
+```{r echo=FALSE}
+plot(marketing_causal, "original")
+```
+
+
+```{r results = 'hide', echo=FALSE}
+summary(marketing_causal, "report")
+```
+
+Durante el período posterior a la intervención, la variable de respuesta tuvo un valor promedio de aprox. 59,88. En ausencia de una intervención, hubiéramos esperado una respuesta promedio de 59,40. El intervalo del 95% de esta predicción contrafactual es [41,81, 77,25]. Al restar esta predicción de la respuesta observada se obtiene una estimación del efecto causal que tuvo la intervención sobre la variable de respuesta. Este efecto es 0,48 con un intervalo del 95% de [-17,36, 18,07]. Para una discusión sobre la importancia de este efecto, vea a continuación.
+
+Al resumir los puntos de datos individuales durante el período posterior a la intervención (que solo a veces se puede interpretar de manera significativa), la variable de respuesta tuvo un valor general de 17.49K. Si la intervención no hubiera tenido lugar, hubiéramos esperado una suma de 17.35K. El intervalo del 95% de esta predicción es [12,21 K, 22,56 K].
+
+Los resultados anteriores se dan en términos de números absolutos. En términos relativos, la variable respuesta mostró un aumento de + 1%. El intervalo del 95% de este porcentaje es [-29%, + 30%].
+
+Esto significa que, aunque la intervención parece haber provocado un efecto positivo, este efecto no es estadísticamente significativo cuando se considera el período completo posterior a la intervención en su conjunto. Por supuesto, los días individuales o períodos más cortos dentro del período de intervención pueden haber tenido un efecto significativo, como se indica siempre que el límite inferior de la serie temporal del impacto (gráfico inferior) fue superior a cero. El efecto aparente podría ser el resultado de fluctuaciones aleatorias que no están relacionadas con la intervención. Este suele ser el caso cuando el período de intervención es muy largo e incluye gran parte del tiempo cuando el efecto ya ha desaparecido. También puede ocurrir cuando el período de intervención es demasiado corto para distinguir la señal del ruido. Finalmente, no encontrar un efecto significativo puede ocurrir cuando no hay suficientes variables de control o cuando estas variables no se correlacionan bien con la variable de respuesta durante el período de aprendizaje.
+
+La probabilidad de obtener este efecto por azar es p = 0,49. Esto significa que el efecto puede ser falso y, en general, no se consideraría estadísticamente significativo.
+
+
+### Casual Impact para Volkswagen
+
+
+```{r}
+plot(price_pair$VOW.DE.Adjusted)
+```
+
+```{r echo=FALSE}
+pre_period <- as.Date(c("2014-01-01", "2019-9-25"))
+post_period <- as.Date(c("2019-9-26", "2020-11-25"))
+```
+
+```{r echo=FALSE}
+marketing_causal <- CausalImpact(xvow, 
+                             pre.period = pre_period, 
+                             post.period = post_period)
+```
+
+En este caso el preiodo de preintervención va desde el 1 de enero de 2014 hasta el 25 de septiembre de 2019 y el periodo de postintervención va desde el 26 de septiembre de 2019 hasta el 25 de noviembre de 2020.
+
+```{r echo=FALSE}
+summary(marketing_causal)
+```
+```{r echo=FALSE}
+plot(marketing_causal)
+```
+
+
+```{r echo=FALSE}
+plot(marketing_causal, "original")
+```
+
+
+```{r results = 'hide', echo=FALSE}
+summary(marketing_causal, "report")
+```
+
+Durante el período posterior a la intervención, la variable de respuesta tuvo un valor promedio de aprox. 59,88. En ausencia de una intervención, hubiéramos esperado una respuesta promedio de 59,40. El intervalo del 95% de esta predicción contrafactual es [41,81, 77,25]. Al restar esta predicción de la respuesta observada se obtiene una estimación del efecto causal que tuvo la intervención sobre la variable de respuesta. Este efecto es 0,48 con un intervalo del 95% de [-17,37, 18,07]. Para una discusión sobre la importancia de este efecto, vea a continuación.
+
+Al resumir los puntos de datos individuales durante el período posterior a la intervención (que solo a veces se puede interpretar de manera significativa), la variable de respuesta tuvo un valor general de 17.49K. Si la intervención no hubiera tenido lugar, hubiéramos esperado una suma de 17.35K. El intervalo del 95% de esta predicción es [12,21 K, 22,56 K].
+
+Los resultados anteriores se dan en términos de números absolutos. En términos relativos, la variable respuesta mostró un aumento de + 1%. El intervalo del 95% de este porcentaje es [-29%, + 30%].
+
+Esto significa que, aunque la intervención parece haber provocado un efecto positivo, este efecto no es estadísticamente significativo cuando se considera el período completo posterior a la intervención en su conjunto. Por supuesto, los días individuales o períodos más cortos dentro del período de intervención pueden haber tenido un efecto significativo, como se indica siempre que el límite inferior de la serie temporal del impacto (gráfico inferior) fue superior a cero. El efecto aparente podría ser el resultado de fluctuaciones aleatorias que no están relacionadas con la intervención. Este suele ser el caso cuando el período de intervención es muy largo e incluye gran parte del tiempo cuando el efecto ya ha desaparecido. También puede ocurrir cuando el período de intervención es demasiado corto para distinguir la señal del ruido. Finalmente, no encontrar un efecto significativo puede ocurrir cuando no hay suficientes variables de control o cuando estas variables no se correlacionan bien con la variable de respuesta durante el período de aprendizaje.
+
+La probabilidad de obtener este efecto por azar es p = 0,49. Esto significa que el efecto puede ser falso y, en general, no se consideraría estadísticamente significativo.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
